@@ -1,3 +1,5 @@
+const mongo = require("mongodb").MongoClient;
+
 /* eslint-disable no-unused-vars */
 class Service {
   constructor (options) {
@@ -5,6 +7,22 @@ class Service {
   }
 
   find (params) {
+    const uri = "mongodb://Admin:Admin@ds161939.mlab.com:61939/studenthack";
+    mongo.connect(uri, function(err, db) {
+
+      if (err) {
+        console.log(err)
+      }
+
+      db.collection("testCollection").insertOne({testVar: "sdafdsfdsafsadf"}, {}, (error, result) => {
+        if (error) {
+          console.error(error)
+        } else {
+          console.log("HURAAAAY!!")
+        }
+      })
+      db.close();
+   });
     return Promise.resolve(["first", "second"]);
   }
 
