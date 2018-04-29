@@ -4,7 +4,6 @@ const compress = require('compression');
 const cors = require('cors');
 const helmet = require('helmet');
 const logger = require('winston');
-
 const feathers = require('@feathersjs/feathers');
 const configuration = require('@feathersjs/configuration');
 const express = require('@feathersjs/express');

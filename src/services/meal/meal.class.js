@@ -1,24 +1,34 @@
 /* eslint-disable no-unused-vars */
-const mongo = require("mongodb").MongoClient;
+const mongo = require("mongodb").MongoClient
+const shortid = require("human-readable-ids").hri;
+const errors = require('@feathersjs/errors')
+const twilio = require('twilio');
+
+// Mongo DB credentials
 const uri = "mongodb://Admin:Admin@ds161939.mlab.com:61939/studenthack"
+
+// Twilio credentials
+const accountSid = 'AC37c9f423354374cad17b570325035cd0';
+const authToken = '1bf04771502f0e9d2df1da5b54ce2f96';
+let from_number = '+441509323478';
 
 const tableFromUID = (uid, mealName) => {
   return new Promise((resolve, reject) => {
     let fedTable;
     mongo.connect(uri, function (err, db) {
       if (err) {
-        throw err
+        reject(err)
       }
 
       db.collection("meals").findOne({
         mealName: mealName
       }, {}, (error, result) => {
         if (error) {
-          throw error
+          reject(error)
         } else {
           console.log(result)
           fedTable = result.invited_tables.find((element) => {
-            return element.table_meal_UID === uid.table_meal_UID
+            return element.UID === uid && !result.served_tables.map(elem => elem.UID).includes(uid)
           })
 
           db.close()
@@ -33,12 +43,12 @@ const tablesToInvite = (mealName) => {
   return new Promise((resolve, reject) => {
     let invitedTables;
     let allTables;
-  
+
     mongo.connect(uri, function (err, db) {
       if (err) {
         reject(err)
       }
-  
+
       db.collection("tables").find().toArray((error, result) => {
         if (error) {
           reject(error)
@@ -46,7 +56,7 @@ const tablesToInvite = (mealName) => {
           allTables = result;
         }
       })
-  
+
       db.collection("meals").findOne({
         mealName: mealName
       }, {
@@ -135,65 +145,100 @@ class Service {
     })
   }
 
-  update(mealName, data, params) {
+  update(mealId, data, params) {
     //params mode=invite or feed
     return new Promise((resolve, reject) => {
-        mongo.connect(uri, async function (err, db) {
-            if (err) {
-              reject(err)
-            }
-            let mode = params.query.mode;
-            if (mode == "invite") {
-              const servedTable = tablesToInvite(mealName).then(names => {
-                  const invitedTables = names.map(elem => {return {tableNo: elem.tableNo, UID: 3}})
-                  db.collection("meals").update({
-                      mealName: mealName
-                    }, {
-                      $push: {
-                        invited_tables: {
-                          $each: invitedTables
-                        }
-                      }
-                    },
-                    function (err, document) {
-                      resolve("Great Success!")
-                      db.close()
-                    })
-                })
-              }
-              else if (mode == "feed") {
-                let uid = data.feed;
-                const servedTable = tableFromUID(uid, mealName).then(table => {
-                  db.collection("meals").update({
-                      mealName: mealName
-                    }, {
-                      $push: {
-                        served_tables: table
-                      }
-                    },
-                    function (err, document) {
-                      resolve("Great Success!")
-                      db.close()
-                    })
-                })
+      mongo.connect(uri, async function (err, db) {
+        if (err) {
+          reject(err)
+        }
+        let mode = params.query.mode;
+        if (mode == "invite") {
+          // find 2 tables to invite
+          const servedTable = tablesToInvite(data.mealName).then(names => {
+            const invitedTables = names.map(elem => {
+              return {
+                tableNo: elem.tableNo,
+                phones: elem.Phones,
+                UID: shortid.random()
               }
             })
-        })
-    }
 
-    patch(id, data, params) {
-      return Promise.resolve(data);
-    }
+            // update database
+            db.collection("meals").update({
+                mealName: data.mealName
+              }, {
+                $push: {
+                  invited_tables: {
+                    $each: invitedTables.map(elem => {
+                      return {
+                        tableNo: elem.tableNo,
+                        UID: elem.UID
+                      }
+                    })
+                  }
+                }
+              },
+              function (err, document) {
+                resolve("Great Success!")
+                db.close()
+              })
 
-    remove(id, params) {
-      return Promise.resolve({
-        id
-      });
-    }
+            // send text message to tables
+
+            // require the Twilio module and create a REST client
+            const client = twilio(accountSid, authToken);
+
+            invitedTables.forEach(table => {
+              table.phones.forEach(number => {
+                client.messages
+                  .create({
+                    to: number,
+                    from: from_number,
+                    body: `Come to the queue to get some ${data.mealName}. Your code is: ${table.UID}`,
+                  })
+                  .then(message => console.log('Successful, ' + message.sid))
+                  .catch(err => console.log("Error: " + err));
+              })
+            })
+          })
+        } else if (mode == "feed") {
+          let uid = data.uid;
+          const servedTable = tableFromUID(uid, data.mealName).then(table => {
+            if (table == null) {
+              reject(new errors.Forbidden("UID not found or already used"))
+            } else {
+              db.collection("meals").update({
+                  mealName: data.mealName
+                }, {
+                  $push: {
+                    served_tables: table
+                  }
+                },
+                function (err, document) {
+                  resolve("Great Success!")
+                  db.close()
+                })
+            }
+          })
+        }
+      })
+    })
   }
 
-  module.exports = function (options) {
-    return new Service(options);
-  };
+  patch(id, data, params) {
+    return Promise.resolve(data);
+  }
 
-  module.exports.Service = Service;
+  remove(id, params) {
+    return Promise.resolve({
+      id
+    });
+  }
+}
+
+module.exports = function (options) {
+  return new Service(options);
+};
+
+module.exports.Service = Service;
